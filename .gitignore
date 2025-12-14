@@ -1,0 +1,20 @@
+# Environment files
+.env
+.env.local
+.env.production
+
+# Google Cloud credentials
+contesthub-token.json
+*.json
+
+# Dependencies
+node_modules/
+package-lock.json
+
+# Logs
+logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
