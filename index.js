@@ -126,7 +126,7 @@ async function run() {
         });
 
         // my created contest api
-        app.get("/contest/my/created", async (req, res) => {
+        app.get("/contest/my/created", verifyToken, async (req, res) => {
             try {
                 const contests = await contestCollection
                     .find({ creatorEmail: req.user.email })
@@ -170,6 +170,41 @@ async function run() {
             const query = { _id: new ObjectId(id) };
             const result = await contestCollection.deleteOne(query);
             res.send(result);
+        });
+
+        // Update contest details (Edit)
+        app.patch("/contest/:id", verifyToken, async (req, res) => {
+            const { id } = req.params;
+            const { name, contestType, deadline, description } = req.body;
+
+            if (!name && !contestType && !deadline && !description) {
+                return res.status(400).send({ message: "No fields provided to update" });
+            }
+
+            try {
+                // Only allow the creator or admin to update
+                const contest = await contestCollection.findOne({ _id: new ObjectId(id) });
+
+                if (!contest) {
+                    return res.status(404).send({ message: "Contest not found" });
+                }
+
+                if (contest.creatorEmail !== req.user.email) {
+                    return res.status(403).send({ message: "Forbidden: Not your contest" });
+                }
+
+                const updateFields = {};
+                if (name) updateFields.name = name;
+                if (contestType) updateFields.contestType = contestType;
+                if (deadline) updateFields.deadline = new Date(deadline);
+                if (description) updateFields.description = description;
+
+                const result = await contestCollection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
+
+                res.send(result);
+            } catch (err) {
+                res.status(500).send({ message: "Failed to update contest", error: err.message });
+            }
         });
 
         //payment relative api
