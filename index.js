@@ -73,12 +73,49 @@ async function run() {
         const submissionCollection = db.collection("submissions");
         const paymentCollection = db.collection("winners");
 
-        // contest relative api
+        // user reletive api
+        app.post("/users", async (req, res) => {
+            const user = req.body;
+            console.log(user);
+            const query = { email: user.email };
+            const exitingUser = await usersCollection.findOne(query);
+            if (exitingUser) {
+                return res.send({ message: "User already exists", insertedId: null });
+            }
+            const newUser = {
+                ...user,
+                role: "user",
+                createdAt: new Date(),
+                wins: 0,
+            };
+            const result = await usersCollection.insertOne(newUser);
+            res.send(result);
+        });
+        // get user
+        app.get("/users/:email", verifyToken, async (req, res) => {
+            const email = req.params.email;
+            if (email !== req.decoded.email) {
+                return res.status(403).send({ message: "Forbidden access" });
+            }
+            const user = await usersCollection.findOne({ email });
+            res.send(user);
+        });
 
-        // Change this line in your server code
+        // update user 
+        app.patch('/users/:email', verifyToken, async(req,res)=>{
+            const email = req.params.email;
+            if(email !== req.decoded.email){
+                return res.status(403).send({message: 'Forbidden access'})
+            }
+            const updates = req.body;
+            const result = await usersCollection.updateOne({email},{$set: updates});
+            res.send(result)
+        })
+
+        // contest relative api
         app.get("/contest", async (req, res) => {
             try {
-                const { type, search, page = 1, limit = 10, status } = req.query; // status optional
+                const { type, search, page = 1, limit = 10, status } = req.query;
                 const query = {};
 
                 if (status) query.status = status;
@@ -147,12 +184,12 @@ async function run() {
 
         app.post("/contest", verifyToken, async (req, res) => {
             console.log("Request body:", req.body);
-            console.log("User email:", req.user.email); // ← Now this works
+            console.log("User email:", req.user.email);
 
             try {
                 const contest = {
                     ...req.body,
-                    creatorEmail: req.user.email, // ← Now this works
+                    creatorEmail: req.user.email,
                     status: "pending",
                     participantsCount: 0,
                     winner: null,
@@ -182,7 +219,6 @@ async function run() {
             }
 
             try {
-                // Only allow the creator or admin to update
                 const contest = await contestCollection.findOne({ _id: new ObjectId(id) });
 
                 if (!contest) {
