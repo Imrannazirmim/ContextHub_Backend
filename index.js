@@ -20,14 +20,13 @@ admin.initializeApp({
 app.use(cors());
 app.use(express.json());
 
-/* ================= GLOBAL COLLECTIONS ================= */
 let usersCollection;
 let contestCollection;
 let participationCollection;
 let submissionCollection;
 let paymentCollection;
 
-/* ================= VERIFY TOKEN ================= */
+// token verify
 const verifyToken = async (req, res, next) => {
     const authorization = req.headers.authorization;
     if (!authorization) return res.status(401).send({ message: "Unauthorized access" });
@@ -42,7 +41,8 @@ const verifyToken = async (req, res, next) => {
     }
 };
 
-/* ================= ROLE MIDDLEWARE ================= */
+// admin verify
+
 const verifyAdmin = async (req, res, next) => {
     const user = await usersCollection.findOne({ email: req.user.email });
     if (user?.role !== "admin") return res.status(403).send({ message: "Forbidden" });
@@ -61,7 +61,6 @@ app.get("/", (req, res) => {
     res.send("this app is running and create api");
 });
 
-/* ================= DB CONNECT ================= */
 const uri = `mongodb+srv://${process.env.DB_USERNAME}:${process.env.DB_PASSWORD}@cluster0.hle6tlh.mongodb.net/?appName=Cluster0`;
 
 const client = new MongoClient(uri, {
@@ -293,7 +292,7 @@ async function run() {
                 .limit(parseInt(limit))
                 .toArray();
 
-            const total = await contestsCollection.countDocuments(query);
+            const total = await contestCollection.countDocuments(query);
 
             res.json({
                 success: true,
@@ -325,7 +324,7 @@ async function run() {
                 });
             }
 
-            const result = await contestsCollection.updateOne(
+            const result = await contestCollection.updateOne(
                 { _id: new ObjectId(id) },
                 {
                     $set: {
@@ -367,7 +366,7 @@ async function run() {
                 });
             }
 
-            const result = await contestsCollection.updateOne(
+            const result = await contestCollection.updateOne(
                 { _id: new ObjectId(id) },
                 {
                     $set: {
@@ -409,7 +408,7 @@ async function run() {
                 });
             }
 
-            const result = await contestsCollection.updateOne(
+            const result = await contestCollection.updateOne(
                 { _id: new ObjectId(id) },
                 {
                     $set: {
@@ -910,7 +909,7 @@ async function run() {
                 });
             }
 
-            const payment = await paymentsCollection.findOne({
+            const payment = await paymentCollection.findOne({
                 contestId: new ObjectId(contestId),
                 userEmail: userEmail,
             });
