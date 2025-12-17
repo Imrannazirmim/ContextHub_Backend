@@ -808,11 +808,93 @@ async function run() {
         }
     });
 
-    //participants
+    //participants for contest
 
     app.post("/participants", verifyToken, async (req, res) => {
-        const participants = req.params.email;
-        console.log(participants);
+        try {
+            const { contestId } = req.body;
+            const userEmail = req.user.email;
+
+            const payment = await paymentCollection.findOne({
+                contestId: new ObjectId(contestId),
+                userEmail: userEmail,
+            });
+
+            if (!payment) {
+                return res.status(403).json({
+                    success: false,
+                    message: "Payment required to register as participant",
+                });
+            }
+
+            const existingParticipant = await participationCollection.findOne({
+                contestId: contestId,
+                userEmail: userEmail,
+            });
+
+            if (existingParticipant) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Already registered as participant",
+                });
+            }
+
+            const user = await usersCollection.findOne({ email: userEmail });
+
+            const participant = {
+                contestId: contestId,
+                contestObjectId: new ObjectId(contestId),
+                userEmail: userEmail,
+                userName: user?.name || "Unknown",
+                userPhoto: user?.photoURL || "",
+                registeredAt: new Date(),
+            };
+
+            const result = await participationCollection.insertOne(participant);
+
+            res.status(201).json({
+                success: true,
+                message: "Participant registered successfully",
+                participantId: result.insertedId,
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "Participant registration failed",
+                error: error.message,
+            });
+        }
+    });
+
+    app.get("/participants/:contestId", async (req, res) => {
+        try {
+            const contestId = req.params.contestId;
+
+            if (!ObjectId.isValid(contestId)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid contest ID",
+                });
+            }
+
+            const participants = await participationCollection
+                .find({ contestId: contestId })
+                .sort({ registeredAt: -1 })
+                .toArray();
+
+            res.json({
+                success: true,
+                participants,
+                count: participants.length,
+            }); 
+            
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "Failed to fetch participants",
+                error: error.message,
+            });
+        }
     });
 
     /* ================= SUBMISSIONS ================= */
