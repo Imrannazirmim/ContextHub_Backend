@@ -461,17 +461,78 @@ async function run() {
     });
 
     app.get("/contest/popular", async (req, res) => {
-        res.send(
-            await contestCollection.find({ status: "confirmed" }).sort({ participantsCount: -1 }).limit(5).toArray()
-        );
+        try {
+            const contests = await contestCollection
+                .find({ status: "confirmed" })
+                .sort({ participantsCount: -1 })
+                .limit(5)
+                .toArray();
+
+            res.json({
+                success: true,
+                contests,
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "Failed to fetch popular contests",
+                error: error.message,
+            });
+        }
+    });
+    app.get("/contest/:id", async (req, res) => {
+        try {
+            const id = req.params.id;
+
+            if (!ObjectId.isValid(id)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid contest ID",
+                });
+            }
+
+            const contest = await contestCollection.findOne({
+                _id: new ObjectId(id),
+            });
+
+            if (!contest) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Contest not found",
+                });
+            }
+
+            res.json({
+                success: true,
+                contest,
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "Failed to fetch contest",
+                error: error.message,
+            });
+        }
     });
 
     app.get("/contest/my/created", verifyToken, async (req, res) => {
-        res.send(await contestCollection.find({ creatorEmail: req.user.email }).toArray());
-    });
+        try {
+            const contests = await contestCollection
+                .find({ creatorEmail: req.user.email })
+                .sort({ createdAt: -1 })
+                .toArray();
 
-    app.get("/contest/:id", async (req, res) => {
-        res.send(await contestCollection.findOne({ _id: new ObjectId(req.params.id) }));
+            res.json({
+                success: true,
+                contests,
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "Failed to fetch creator contests",
+                error: error.message,
+            });
+        }
     });
 
     app.post("/contest", verifyToken, async (req, res) => {
@@ -486,6 +547,73 @@ async function run() {
         res.send(await contestCollection.insertOne(contest));
     });
 
+    //contest creator only approve update
+
+    app.put("/api/contests/:id", verifyToken, verifyCreator, async (req, res) => {
+        try {
+            const id = req.params.id;
+
+            if (!ObjectId.isValid(id)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid contest ID",
+                });
+            }
+
+            const contest = await contestCollection.findOne({
+                _id: new ObjectId(id),
+            });
+
+            if (!contest) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Contest not found",
+                });
+            }
+
+            if (contest.creatorEmail !== req.user.email) {
+                return res.status(403).json({
+                    success: false,
+                    message: "You can only update your own contests",
+                });
+            }
+
+            if (contest.status !== "pending") {
+                return res.status(400).json({
+                    success: false,
+                    message: "Cannot update approved or rejected contests",
+                });
+            }
+
+            const updateData = req.body;
+            const updatedContest = {
+                name: updateData.name,
+                image: updateData.image,
+                description: updateData.description,
+                price: parseFloat(updateData.price),
+                prizeMoney: parseFloat(updateData.prizeMoney),
+                taskInstruction: updateData.taskInstruction,
+                contestType: updateData.contestType,
+                deadline: new Date(updateData.deadline),
+                updatedAt: new Date(),
+            };
+
+            const result = await contestCollection.updateOne({ _id: new ObjectId(id) }, { $set: updatedContest });
+
+            res.json({
+                success: true,
+                message: "Contest updated successfully",
+                modifiedCount: result.modifiedCount,
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "Contest update failed",
+                error: error.message,
+            });
+        }
+    });
+
     app.delete("/contest/:id", verifyToken, verifyCreator, async (req, res) => {
         const contest = await contestCollection.findOne({ _id: new ObjectId(req.params.id) });
         if (contest.creatorEmail !== req.user.email) {
@@ -494,7 +622,9 @@ async function run() {
         res.send(await contestCollection.deleteOne({ _id: new ObjectId(req.params.id) }));
     });
 
-    /* ================= PAYMENTS ================= */
+    
+    //payment relative api
+
     app.post("/payment-checkout-session", verifyToken, async (req, res) => {
         const { contestId, amount } = req.body;
 
