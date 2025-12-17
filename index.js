@@ -622,7 +622,6 @@ async function run() {
         res.send(await contestCollection.deleteOne({ _id: new ObjectId(req.params.id) }));
     });
 
-    
     //payment relative api
 
     app.post("/payment-checkout-session", verifyToken, async (req, res) => {
@@ -644,8 +643,8 @@ async function run() {
                 {
                     price_data: {
                         currency: "usd",
-                        unit_amount: amount * 100,
-                        product_data: { name: contest.name },
+                        unit_amount: Math.round(amount * 100),
+                        product_data: { name: contest.name, description: `Registration for ${contest.description}` },
                     },
                     quantity: 1,
                 },
@@ -662,10 +661,20 @@ async function run() {
         try {
             const { sessionId } = req.body;
 
+            if (!sessionId) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Session ID is required",
+                });
+            }
+
             const session = await stripe.checkout.sessions.retrieve(sessionId);
 
             if (session.payment_status !== "paid") {
-                return res.status(400).send({ message: "Payment not completed" });
+                return res.status(400).json({
+                    success: false,
+                    message: "Payment not completed",
+                });
             }
 
             const alreadyPaid = await paymentCollection.findOne({
@@ -673,25 +682,129 @@ async function run() {
             });
 
             if (alreadyPaid) {
-                return res.send({ message: "Payment already confirmed" });
+                return res.json({
+                    success: true,
+                    message: "Payment already confirmed",
+                    alreadyProcessed: true,
+                });
             }
 
             const contestId = session.metadata.contestId;
+            const userEmail = session.metadata.userEmail || session.customer_email;
 
-            await paymentCollection.insertOne({
+            const user = await usersCollection.findOne({ email: userEmail });
+
+            const paymentRecord = {
                 contestId: new ObjectId(contestId),
-                userEmail: session.customer_email,
+                userEmail: userEmail,
+                userName: user?.name || "Unknown",
+                userPhoto: user?.photoURL || "",
                 amount: session.amount_total / 100,
                 transactionId: session.payment_intent,
                 status: "completed",
                 paidAt: new Date(),
-            });
+            };
+
+            await paymentCollection.insertOne(paymentRecord);
 
             await contestCollection.updateOne({ _id: new ObjectId(contestId) }, { $inc: { participantsCount: 1 } });
 
-            res.send({ success: true });
-        } catch (err) {
-            res.status(500).send({ message: err.message });
+            await usersCollection.updateOne({ email: userEmail }, { $inc: { participationCount: 1 } });
+
+            await participationCollection.insertOne({
+                contestId: contestId,
+                contestObjectId: new ObjectId(contestId),
+                userEmail: userEmail,
+                userName: user?.name || "Unknown",
+                userPhoto: user?.photoURL || "",
+                registeredAt: new Date(),
+            });
+
+            res.json({
+                success: true,
+                message: "Payment confirmed successfully",
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "Payment confirmation failed",
+                error: error.message,
+            });
+        }
+    });
+
+    // check payments
+
+    app.get("/payment/check/:contestId", verifyToken, async (req, res) => {
+        try {
+            const contestId = req.params.contestId;
+            const userEmail = req.user.email;
+
+            const payment = await paymentCollection.findOne({
+                contestId: new ObjectId(contestId),
+                userEmail: userEmail,
+            });
+
+            res.json({
+                success: true,
+                isRegistered: !!payment,
+                payment: payment || null,
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "Failed to check registration",
+                error: error.message,
+            });
+        }
+    });
+
+    //user payment contests
+
+    app.get("/payment/user/:email", verifyToken, async (req, res) => {
+        try {
+            const email = req.params.email;
+
+            if (req.user.email !== email) {
+                return res.status(403).json({
+                    success: false,
+                    message: "Forbidden access",
+                });
+            }
+
+            const payments = await paymentCollection.find({ userEmail: email }).sort({ paidAt: -1 }).toArray();
+
+            // Get contest details for each payment
+            const contestIds = payments.map((p) => p.contestId);
+            const contests = await contestCollection.find({ _id: { $in: contestIds } }).toArray();
+
+            // Merge payment and contest data
+            const participatedContests = payments.map((payment) => {
+                const contest = contests.find((c) => c._id.toString() === payment.contestId.toString());
+                return {
+                    ...payment,
+                    contest,
+                };
+            });
+
+            // Sort by upcoming deadline
+            participatedContests.sort((a, b) => {
+                if (!a.contest || !b.contest) return 0;
+                const dateA = new Date(a.contest.deadline);
+                const dateB = new Date(b.contest.deadline);
+                return dateA - dateB;
+            });
+
+            res.json({
+                success: true,
+                participatedContests,
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "Failed to fetch participated contests",
+                error: error.message,
+            });
         }
     });
 
