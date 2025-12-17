@@ -1056,17 +1056,146 @@ async function run() {
         }
     });
 
-    /* ================= WINNER ================= */
+    // winner relative api
+
     app.patch("/contests/:id/winner", verifyToken, verifyCreator, async (req, res) => {
-        const contest = await contestCollection.findOne({ _id: new ObjectId(req.params.id) });
-        if (contest.creatorEmail !== req.user.email) {
-            return res.status(403).send({ message: "Forbidden" });
+        try {
+            const contestId = req.params.id;
+            const { winnerEmail, winnerName, winnerPhoto } = req.body;
+
+            if (!ObjectId.isValid(contestId)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid contest ID",
+                });
+            }
+
+            if (!winnerEmail) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Winner email is required",
+                });
+            }
+
+            const contest = await contestCollection.findOne({
+                _id: new ObjectId(contestId),
+            });
+
+            if (!contest) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Contest not found",
+                });
+            }
+
+            if (contest.creatorEmail !== req.user.email) {
+                return res.status(403).json({
+                    success: false,
+                    message: "You can only declare winners for your own contests",
+                });
+            }
+
+            if (new Date() < new Date(contest.deadline)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Cannot declare winner before contest deadline",
+                });
+            }
+
+            if (contest.winner) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Winner already declared for this contest",
+                });
+            }
+
+            const submission = await submissionCollection.findOne({
+                contestId: new ObjectId(contestId),
+                userEmail: winnerEmail,
+            });
+
+            if (!submission) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Winner must have submitted a task",
+                });
+            }
+
+            let winner = { email: winnerEmail };
+            if (winnerName && winnerPhoto) {
+                winner.name = winnerName;
+                winner.photo = winnerPhoto;
+            } else {
+                const winnerUser = await usersCollection.findOne({ email: winnerEmail });
+                winner.name = winnerUser?.name || "Unknown";
+                winner.photo = winnerUser?.photoURL || "";
+            }
+
+            await contestCollection.updateOne(
+                { _id: new ObjectId(contestId) },
+                {
+                    $set: {
+                        winner: winner,
+                        winnerId: winnerEmail,
+                        winnerName: winner.name,
+                        winnerPhoto: winner.photo,
+                        winnerDeclaredAt: new Date(),
+                    },
+                }
+            );
+
+            await submissionCollection.updateOne(
+                { contestId: new ObjectId(contestId), userEmail: winnerEmail },
+                { $set: { isWinner: true } }
+            );
+
+            await usersCollection.updateOne({ email: winnerEmail }, { $inc: { wins: 1 } });
+
+            res.json({
+                success: true,
+                message: "Winner declared successfully",
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "Failed to declare winner",
+                error: error.message,
+            });
         }
+    });
 
-        await contestCollection.updateOne({ _id: new ObjectId(req.params.id) }, { $set: { winner: req.body } });
+    // winning by user
 
-        await usersCollection.updateOne({ email: req.body.winnerEmail }, { $inc: { wins: 1 } });
-        res.send({ success: true });
+    app.get("/winning/user/:email", verifyToken, async (req, res) => {
+        try {
+            const email = req.params.email;
+
+            if (req.user.email !== email) {
+                return res.status(403).json({
+                    success: false,
+                    message: "Forbidden access",
+                });
+            }
+
+            const winningContests = await contestCollection
+                .find({
+                    $or: [{ winnerId: email }, { "winner.email": email }],
+                })
+                .sort({ winnerDeclaredAt: -1 })
+                .toArray();
+
+            res.json({
+                success: true,
+                winningContests,
+                count: winningContests.length,
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "Failed to fetch winning contests",
+                error: error.message,
+            });
+        }
     });
 
     /* ================= LEADERBOARD ================= */
