@@ -886,8 +886,7 @@ async function run() {
                 success: true,
                 participants,
                 count: participants.length,
-            }); 
-            
+            });
         } catch (error) {
             res.status(500).json({
                 success: false,
@@ -897,21 +896,164 @@ async function run() {
         }
     });
 
-    /* ================= SUBMISSIONS ================= */
-    app.post("/submissions", verifyToken, async (req, res) => {
-        const paid = await paymentCollection.findOne({
-            contestId: new ObjectId(req.body.contestId),
-            userEmail: req.user.email,
-        });
-        if (!paid) return res.status(403).send({ message: "Payment required" });
+    // submissions all relative api
 
-        res.send(
-            await submissionCollection.insertOne({
-                ...req.body,
-                userEmail: req.user.email,
+    app.post("/submissions", verifyToken, async (req, res) => {
+        try {
+            const { contestId, submittedTask } = req.body;
+            const userEmail = req.user.email;
+
+            if (!contestId || !submittedTask) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Contest ID and submitted task are required",
+                });
+            }
+
+            const payment = await paymentsCollection.findOne({
+                contestId: new ObjectId(contestId),
+                userEmail: userEmail,
+            });
+
+            if (!payment) {
+                return res.status(403).json({
+                    success: false,
+                    message: "Payment required before submitting task",
+                });
+            }
+
+            const user = await usersCollection.findOne({ email: userEmail });
+
+            const existingSubmission = await submissionCollection.findOne({
+                contestId: new ObjectId(contestId),
+                userEmail: userEmail,
+            });
+
+            if (existingSubmission) {
+                const result = await submissionCollection.updateOne(
+                    { contestId: new ObjectId(contestId), userEmail: userEmail },
+                    {
+                        $set: {
+                            submittedTask,
+                            updatedAt: new Date(),
+                        },
+                    }
+                );
+
+                return res.json({
+                    success: true,
+                    message: "Task updated successfully",
+                    modifiedCount: result.modifiedCount,
+                });
+            }
+
+            const submission = {
+                contestId: new ObjectId(contestId),
+                userEmail: userEmail,
+                userName: user?.name || "Unknown",
+                userPhoto: user?.photoURL || "",
+                submittedTask: submittedTask,
+                isWinner: false,
                 submittedAt: new Date(),
-            })
-        );
+            };
+
+            const result = await submissionCollection.insertOne(submission);
+
+            res.status(201).json({
+                success: true,
+                message: "Task submitted successfully",
+                submissionId: result.insertedId,
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "Task submission failed",
+                error: error.message,
+            });
+        }
+    });
+
+    app.get("/submissions/contest/:contestId", verifyToken, verifyCreator, async (req, res) => {
+        try {
+            const contestId = req.params.contestId;
+
+            if (!ObjectId.isValid(contestId)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid contest ID",
+                });
+            }
+
+            const contest = await contestCollection.findOne({
+                _id: new ObjectId(contestId),
+            });
+
+            if (!contest) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Contest not found",
+                });
+            }
+
+            const user = await usersCollection.findOne({ email: req.user.email });
+
+            if (contest.creatorEmail !== req.user.email && user.role !== "admin") {
+                return res.status(403).json({
+                    success: false,
+                    message: "You can only view submissions for your own contests",
+                });
+            }
+
+            const submissions = await submissionCollection
+                .find({ contestId: new ObjectId(contestId) })
+                .sort({ submittedAt: -1 })
+                .toArray();
+
+            res.json({
+                success: true,
+                submissions,
+                count: submissions.length,
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "Failed to fetch submissions",
+                error: error.message,
+            });
+        }
+    });
+
+    // submission for contest
+
+    app.get("/submissions/user/:contestId", verifyToken, async (req, res) => {
+        try {
+            const contestId = req.params.contestId;
+            const userEmail = req.user.email;
+
+            if (!ObjectId.isValid(contestId)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid contest ID",
+                });
+            }
+
+            const submission = await submissionCollection.findOne({
+                contestId: new ObjectId(contestId),
+                userEmail: userEmail,
+            });
+
+            res.json({
+                success: true,
+                submission: submission || null,
+                hasSubmitted: !!submission,
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "Failed to fetch submission",
+                error: error.message,
+            });
+        }
     });
 
     /* ================= WINNER ================= */
