@@ -1198,31 +1198,105 @@ async function run() {
         }
     });
 
-    /* ================= LEADERBOARD ================= */
+    // leaderboard relative api added
+
     app.get("/leaderboard", async (req, res) => {
-        res.send(
-            await usersCollection
+        try {
+            const { limit = 20 } = req.query;
+
+            const topUsers = await usersCollection
                 .find({ wins: { $gt: 0 } })
-                .sort({ wins: -1 })
-                .toArray()
-        );
+                .sort({ wins: -1, name: 1 })
+                .limit(parseInt(limit))
+                .project({
+                    name: 1,
+                    photoURL: 1,
+                    wins: 1,
+                    participationCount: 1,
+                    email: 1,
+                })
+                .toArray();
+
+            const leaderboard = topUsers.map((user, index) => ({
+                ...user,
+                rank: index + 1,
+            }));
+
+            res.json({
+                success: true,
+                leaderboard,
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "Failed to fetch leaderboard",
+                error: error.message,
+            });
+        }
     });
 
-    /* ================= STATS ================= */
-    app.get("/stats/user", verifyToken, async (req, res) => {
-        const participated = await paymentCollection.countDocuments({ userEmail: req.user.email });
-        const won = await contestCollection.countDocuments({ "winner.email": req.user.email });
+    // stats relative api
 
-        res.send({
-            participated,
-            won,
-            winPercentage: participated ? ((won / participated) * 100).toFixed(2) : 0,
-        });
+    app.get("/stats/user:email", verifyToken, async (req, res) => {
+        try {
+            const email = req.params.email;
+
+            if (req.user.email !== email) {
+                return res.status(403).json({
+                    success: false,
+                    message: "Forbidden access",
+                });
+            }
+
+            const user = await usersCollection.findOne({ email });
+
+            if (!user) {
+                return res.status(404).json({
+                    success: false,
+                    message: "User not found",
+                });
+            }
+
+            const participated = user.participationCount || 0;
+            const won = user.wins || 0;
+            const winPercentage = participated > 0 ? ((won / participated) * 100).toFixed(2) : 0;
+
+            res.json({
+                success: true,
+                stats: {
+                    participated,
+                    won,
+                    winPercentage: parseFloat(winPercentage),
+                },
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "Failed to fetch user statistics",
+                error: error.message,
+            });
+        }
     });
 
-    /* ================= CONTEST TYPES ================= */
+    // contest type api
+
     app.get("/contest-types", async (req, res) => {
-        res.send(await contestCollection.distinct("contestType", { status: "confirmed" }));
+        try {
+            const types = await contestCollection.distinct("contestType", {
+                status: "confirmed",
+            });
+
+            res.json({
+                success: true,
+                types: types.filter((type) => type),
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "Failed to fetch contest types",
+                error: error.message,
+            });
+        }
     });
 }
 
