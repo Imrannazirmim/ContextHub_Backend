@@ -78,33 +78,126 @@ async function run() {
     const db = client.db(process.env.DB_USERNAME);
     usersCollection = db.collection("users");
     contestCollection = db.collection("contests");
-    participationCollection = db.collection("participation");
+    participationCollection = db.collection("participants");
     submissionCollection = db.collection("submissions");
     paymentCollection = db.collection("payments");
 
-    /* ================= USERS ================= */
+    // user reletive api
     app.post("/users", async (req, res) => {
-        const user = req.body;
-        const exists = await usersCollection.findOne({ email: user.email });
-        if (exists) return res.send({ message: "User already exists", insertedId: null });
+        try {
+            const user = req.body;
+            const exitingUser = await usersCollection.findOne({ email: user.email });
+            if (exitingUser) {
+                return res.json({
+                    success: true,
+                    message: "User already exists",
+                    user: exitingUser,
+                    insertedId: null,
+                });
+            }
 
-        const newUser = { ...user, role: "user", createdAt: new Date(), wins: 0 };
-        const result = await usersCollection.insertOne(newUser);
-        res.send(result);
+            const newUser = {
+                name: user.name,
+                email: user.email,
+                photoURL: user.photoURL || "",
+                role: "user",
+                wins: 0,
+                participationCount: 0,
+                createdAt: new Date(),
+            };
+            const result = await usersCollection.insertOne(newUser);
+            res.status(201).json({
+                success: true,
+                message: "User registered successfully.",
+                user: { ...newUser, _id: result.insertedId },
+                insertedId: result.insertedId,
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "User registered failed.",
+                error: error.message,
+            });
+        }
     });
+
+    // user verify email
 
     app.get("/users/:email", verifyToken, async (req, res) => {
-        if (req.params.email !== req.user.email) {
-            return res.status(403).send({ message: "Forbidden access" });
+        try {
+            const email = req.params.email;
+            if (req.user.email !== email) {
+                return res.status(403).json({
+                    success: false,
+                    message: "Forbidden access",
+                });
+            }
+            const user = await usersCollection.findOne({ email });
+            if (!user) {
+                return res.status(404).json({
+                    success: false,
+                    message: "User not found",
+                });
+            }
+            res.json({
+                success: true,
+                user,
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "Failed to fetch user",
+                error: error.message,
+            });
         }
-        res.send(await usersCollection.findOne({ email: req.user.email }));
     });
 
+    // update user profile
+
     app.patch("/users/:email", verifyToken, async (req, res) => {
-        if (req.params.email !== req.user.email) {
-            return res.status(403).send({ message: "Forbidden access" });
+        try {
+            const email = req.params.email;
+
+            if (req.user.email !== email) {
+                return res.status(403).json({
+                    success: false,
+                    message: "Forbidden access",
+                });
+            }
+
+            const updates = req.body;
+            const allowedUpdates = ["name", "photoURL"];
+            const updateData = {};
+
+            allowedUpdates.forEach((field) => {
+                if (updates[field] !== undefined) {
+                    updateData[field] = updates[field];
+                }
+            });
+
+            updateData.updatedAt = new Date();
+
+            const result = await usersCollection.updateOne({ email }, { $set: updateData });
+
+            if (result.matchedCount === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: "User not found",
+                });
+            }
+
+            res.json({
+                success: true,
+                message: "Profile updated successfully",
+                modifiedCount: result.modifiedCount,
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "Profile update failed",
+                error: error.message,
+            });
         }
-        res.send(await usersCollection.updateOne({ email: req.user.email }, { $set: req.body }));
     });
 
     /* ================= ADMIN ================= */
@@ -261,6 +354,13 @@ async function run() {
         } catch (err) {
             res.status(500).send({ message: err.message });
         }
+    });
+
+    //participants
+
+    app.post("/participants", verifyToken, async (req, res) => {
+        const participants = req.params.email;
+        console.log(participants);
     });
 
     /* ================= SUBMISSIONS ================= */
