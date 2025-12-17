@@ -200,35 +200,244 @@ async function run() {
         }
     });
 
-    /* ================= ADMIN ================= */
+    //  Admin reletive api
+
     app.get("/admin/users", verifyToken, verifyAdmin, async (req, res) => {
-        res.send(await usersCollection.find().toArray());
+        try {
+            const { page = 1, limit = 10 } = req.query;
+            const skip = (parseInt(page) - 1) * parseInt(limit);
+
+            const users = await usersCollection
+                .find({})
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(parseInt(limit))
+                .toArray();
+
+            const total = await usersCollection.countDocuments({});
+
+            res.json({
+                success: true,
+                users,
+                pagination: {
+                    total,
+                    page: parseInt(page),
+                    limit: parseInt(limit),
+                    totalPages: Math.ceil(total / parseInt(limit)),
+                },
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "Failed to fetch users",
+                error: error.message,
+            });
+        }
     });
 
     app.patch("/admin/users/:id/role", verifyToken, verifyAdmin, async (req, res) => {
-        res.send(
-            await usersCollection.updateOne({ _id: new ObjectId(req.params.id) }, { $set: { role: req.body.role } })
-        );
+        try {
+            const id = req.params.id;
+            const { role } = req.body;
+
+            if (!["user", "creator", "admin"].includes(role)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid role. Must be user, creator, or admin",
+                });
+            }
+
+            if (!ObjectId.isValid(id)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid user ID",
+                });
+            }
+
+            const result = await usersCollection.updateOne(
+                { _id: new ObjectId(id) },
+                { $set: { role, updatedAt: new Date() } }
+            );
+
+            if (result.matchedCount === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: "User not found",
+                });
+            }
+
+            res.json({
+                success: true,
+                message: "User role updated successfully",
+                modifiedCount: result.modifiedCount,
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "Role update failed",
+                error: error.message,
+            });
+        }
     });
 
     app.get("/admin/contest", verifyToken, verifyAdmin, async (req, res) => {
-        res.send(await contestCollection.find().toArray());
+        try {
+            const { page = 1, limit = 10, status } = req.query;
+            const query = status ? { status } : {};
+            const skip = (parseInt(page) - 1) * parseInt(limit);
+
+            const contests = await contestsCollection
+                .find(query)
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(parseInt(limit))
+                .toArray();
+
+            const total = await contestsCollection.countDocuments(query);
+
+            res.json({
+                success: true,
+                contests,
+                pagination: {
+                    total,
+                    page: parseInt(page),
+                    limit: parseInt(limit),
+                    totalPages: Math.ceil(total / parseInt(limit)),
+                },
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "Failed to fetch contests",
+                error: error.message,
+            });
+        }
     });
 
     app.patch("/admin/contest/:id/approve", verifyToken, verifyAdmin, async (req, res) => {
-        res.send(
-            await contestCollection.updateOne({ _id: new ObjectId(req.params.id) }, { $set: { status: "confirmed" } })
-        );
+        try {
+            const id = req.params.id;
+
+            if (!ObjectId.isValid(id)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid contest ID",
+                });
+            }
+
+            const result = await contestsCollection.updateOne(
+                { _id: new ObjectId(id) },
+                {
+                    $set: {
+                        status: "confirmed",
+                        approvedAt: new Date(),
+                    },
+                }
+            );
+
+            if (result.matchedCount === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Contest not found",
+                });
+            }
+
+            res.json({
+                success: true,
+                message: "Contest approved successfully",
+                modifiedCount: result.modifiedCount,
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "Contest approval failed",
+                error: error.message,
+            });
+        }
     });
 
     app.patch("/admin/contest/:id/reject", verifyToken, verifyAdmin, async (req, res) => {
-        res.send(
-            await contestCollection.updateOne({ _id: new ObjectId(req.params.id) }, { $set: { status: "reject" } })
-        );
+        try {
+            const id = req.params.id;
+
+            if (!ObjectId.isValid(id)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid contest ID",
+                });
+            }
+
+            const result = await contestsCollection.updateOne(
+                { _id: new ObjectId(id) },
+                {
+                    $set: {
+                        status: "rejected",
+                        rejectedAt: new Date(),
+                    },
+                }
+            );
+
+            if (result.matchedCount === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Contest not found",
+                });
+            }
+
+            res.json({
+                success: true,
+                message: "Contest rejected successfully",
+                modifiedCount: result.modifiedCount,
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "Contest rejection failed",
+                error: error.message,
+            });
+        }
     });
 
     app.delete("/admin/contest/:id", verifyToken, verifyAdmin, async (req, res) => {
-        res.send(await contestCollection.deleteOne({ _id: new ObjectId(req.params.id) }));
+        try {
+            const id = req.params.id;
+
+            if (!ObjectId.isValid(id)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid contest ID",
+                });
+            }
+
+            const result = await contestsCollection.updateOne(
+                { _id: new ObjectId(id) },
+                {
+                    $set: {
+                        status: "rejected",
+                        rejectedAt: new Date(),
+                    },
+                }
+            );
+
+            if (result.matchedCount === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Contest not found",
+                });
+            }
+
+            res.json({
+                success: true,
+                message: "Contest rejected successfully",
+                modifiedCount: result.modifiedCount,
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: "Contest rejection failed",
+                error: error.message,
+            });
+        }
     });
 
     /* ================= CONTEST ================= */
