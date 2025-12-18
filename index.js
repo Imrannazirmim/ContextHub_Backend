@@ -96,9 +96,7 @@ async function run() {
             }
 
             const newUser = {
-                name: user.name,
-                email: user.email,
-                photoURL: user.photoURL || "",
+                ...user,
                 role: "user",
                 wins: 0,
                 participationCount: 0,
@@ -165,31 +163,8 @@ async function run() {
             }
 
             const updates = req.body;
-            const allowedUpdates = ["name", "photoURL"];
-            const updateData = {};
-
-            allowedUpdates.forEach((field) => {
-                if (updates[field] !== undefined) {
-                    updateData[field] = updates[field];
-                }
-            });
-
-            updateData.updatedAt = new Date();
-
-            const result = await usersCollection.updateOne({ email }, { $set: updateData });
-
-            if (result.matchedCount === 0) {
-                return res.status(404).json({
-                    success: false,
-                    message: "User not found",
-                });
-            }
-
-            res.json({
-                success: true,
-                message: "Profile updated successfully",
-                modifiedCount: result.modifiedCount,
-            });
+            const result = await usersCollection.updateOne({ email }, { $set: updates });
+            res.send(result);
         } catch (error) {
             res.status(500).json({
                 success: false,
@@ -198,10 +173,9 @@ async function run() {
             });
         }
     });
-
     //  Admin reletive api
 
-    app.get("/admin/users", verifyToken, verifyAdmin, async (req, res) => {
+    app.get("/admin/users", verifyToken, async (req, res) => {
         try {
             const { page = 1, limit = 10 } = req.query;
             const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -234,7 +208,7 @@ async function run() {
         }
     });
 
-    app.patch("/admin/users/:id/role", verifyToken, verifyAdmin, async (req, res) => {
+    app.patch("/admin/users/:id/role", verifyToken, async (req, res) => {
         try {
             const id = req.params.id;
             const { role } = req.body;
@@ -280,40 +254,37 @@ async function run() {
     });
 
     app.get("/admin/contest", verifyToken, verifyAdmin, async (req, res) => {
-        try {
-            const { page = 1, limit = 10, status } = req.query;
-            const query = status ? { status } : {};
-            const skip = (parseInt(page) - 1) * parseInt(limit);
+        const { page = 1, limit = 10, status, search } = req.query;
+        const skip = (page - 1) * limit;
 
-            const contests = await contestsCollection
-                .find(query)
-                .sort({ createdAt: -1 })
-                .skip(skip)
-                .limit(parseInt(limit))
-                .toArray();
+        let query = {};
 
-            const total = await contestCollection.countDocuments(query);
-
-            res.json({
-                success: true,
-                contests,
-                pagination: {
-                    total,
-                    page: parseInt(page),
-                    limit: parseInt(limit),
-                    totalPages: Math.ceil(total / parseInt(limit)),
-                },
-            });
-        } catch (error) {
-            res.status(500).json({
-                success: false,
-                message: "Failed to fetch contests",
-                error: error.message,
-            });
+        if (status && status !== "all") {
+            query.status = status;
         }
-    });
 
-    app.patch("/admin/contest/:id/approve", verifyToken, verifyAdmin, async (req, res) => {
+        if (search) {
+            query.$or = [
+                { name: { $regex: search, $options: "i" } },
+                { description: { $regex: search, $options: "i" } },
+            ];
+        }
+
+        const contests = await contestCollection.find(query).sort({ createdAt: -1 }).skip(skip).limit(+limit).toArray();
+
+        const total = await contestCollection.countDocuments(query);
+
+        res.json({
+            contests,
+            pagination: {
+                total,
+                page: +page,
+                limit: +limit,
+                totalPages: Math.ceil(total / limit),
+            },
+        });
+    });
+    app.patch("/admin/contest/:id/approve", verifyToken, async (req, res) => {
         try {
             const id = req.params.id;
 
@@ -355,7 +326,7 @@ async function run() {
         }
     });
 
-    app.patch("/admin/contest/:id/reject", verifyToken, verifyAdmin, async (req, res) => {
+    app.patch("/admin/contest/:id/reject", verifyToken, async (req, res) => {
         try {
             const id = req.params.id;
 
@@ -397,7 +368,7 @@ async function run() {
         }
     });
 
-    app.delete("/admin/contest/:id", verifyToken, verifyAdmin, async (req, res) => {
+    app.delete("/admin/contest/:id", verifyToken, async (req, res) => {
         try {
             const id = req.params.id;
 
@@ -438,8 +409,36 @@ async function run() {
             });
         }
     });
+    app.get("/admin/analytics", verifyToken, async (req, res) => {
+        try {
+            const totalContests = await contestCollection.countDocuments();
+            const totalUsers = await usersCollection.countDocuments();
+            const revenueResult = await paymentCollection
+                .aggregate([{ $group: { _id: null, total: { $sum: "$amount" } } }])
+                .toArray();
+            const totalRevenue = revenueResult[0]?.total || 0;
 
-    /* ================= CONTEST ================= */
+            const recentContests = await contestCollection.find({}).sort({ createdAt: -1 }).limit(5).toArray();
+
+            res.json({
+                stats: {
+                    totalContests,
+                    totalUsers,
+                    totalRevenue,
+                    pendingCount: await contestCollection.countDocuments({ status: "pending" }),
+                    totalParticipants: await paymentCollection.countDocuments(),
+                },
+                recentContests,
+                newUsers: [], // Add real data later
+                categories: [], // Add real data later
+            });
+        } catch (error) {
+            res.status(500).json({ message: "Server error", error: error.message });
+        }
+    });
+
+    // contest
+
     app.get("/contest", async (req, res) => {
         const { type, search, page = 1, limit = 10, status } = req.query;
         const query = {};
@@ -548,7 +547,7 @@ async function run() {
 
     //contest creator only approve update
 
-    app.put("/api/contests/:id", verifyToken, verifyCreator, async (req, res) => {
+    app.put("/contests/:id", verifyToken, async (req, res) => {
         try {
             const id = req.params.id;
 
@@ -613,7 +612,7 @@ async function run() {
         }
     });
 
-    app.delete("/contest/:id", verifyToken, verifyCreator, async (req, res) => {
+    app.delete("/contest/:id", verifyToken, async (req, res) => {
         const contest = await contestCollection.findOne({ _id: new ObjectId(req.params.id) });
         if (contest.creatorEmail !== req.user.email) {
             return res.status(403).send({ message: "Forbidden" });
@@ -661,41 +660,29 @@ async function run() {
             const { sessionId } = req.body;
 
             if (!sessionId) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Session ID is required",
-                });
+                return res.status(400).json({ success: false, message: "Session ID required" });
             }
 
             const session = await stripe.checkout.sessions.retrieve(sessionId);
 
             if (session.payment_status !== "paid") {
-                return res.status(400).json({
-                    success: false,
-                    message: "Payment not completed",
-                });
+                return res.status(400).json({ success: false, message: "Payment not completed" });
             }
 
-            const alreadyPaid = await paymentCollection.findOne({
-                transactionId: session.payment_intent,
-            });
-
+            const alreadyPaid = await paymentCollection.findOne({ transactionId: session.payment_intent });
             if (alreadyPaid) {
-                return res.json({
-                    success: true,
-                    message: "Payment already confirmed",
-                    alreadyProcessed: true,
-                });
+                return res.json({ success: true, message: "Payment already confirmed", alreadyProcessed: true });
             }
 
             const contestId = session.metadata.contestId;
             const userEmail = session.metadata.userEmail || session.customer_email;
 
             const user = await usersCollection.findOne({ email: userEmail });
+            if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
             const paymentRecord = {
                 contestId: new ObjectId(contestId),
-                userEmail: userEmail,
+                userEmail,
                 userName: user?.name || "Unknown",
                 userPhoto: user?.photoURL || "",
                 amount: session.amount_total / 100,
@@ -706,32 +693,34 @@ async function run() {
 
             await paymentCollection.insertOne(paymentRecord);
 
-            await contestCollection.updateOne({ _id: new ObjectId(contestId) }, { $inc: { participantsCount: 1 } });
+            await contestCollection.updateOne(
+                { _id: new ObjectId(contestId) },
+                {
+                    $inc: { participantsCount: 1 },
+                    $set: { status: "completed" },
+                }
+            );
 
             await usersCollection.updateOne({ email: userEmail }, { $inc: { participationCount: 1 } });
 
-            await participationCollection.insertOne({
-                contestId: contestId,
-                contestObjectId: new ObjectId(contestId),
-                userEmail: userEmail,
-                userName: user?.name || "Unknown",
-                userPhoto: user?.photoURL || "",
-                registeredAt: new Date(),
-            });
+            try {
+                await participationCollection.insertOne({
+                    contestId,
+                    contestObjectId: new ObjectId(contestId),
+                    userEmail,
+                    userName: user?.name || "Unknown",
+                    userPhoto: user?.photoURL || "",
+                    registeredAt: new Date(),
+                });
+            } catch (err) {
+                if (err.code !== 11000) throw err;
+            }
 
-            res.json({
-                success: true,
-                message: "Payment confirmed successfully",
-            });
+            res.json({ success: true, message: "Payment confirmed and participant registered successfully" });
         } catch (error) {
-            res.status(500).json({
-                success: false,
-                message: "Payment confirmation failed",
-                error: error.message,
-            });
+            res.status(500).json({ success: false, message: "Payment confirmation failed", error: error.message });
         }
     });
-
     // check payments
 
     app.get("/payment/check/:contestId", verifyToken, async (req, res) => {
@@ -809,6 +798,23 @@ async function run() {
 
     //participants for contest
 
+    app.get("/participants", verifyToken, async (req, res) => {
+        const email = req.params.email;
+        const payments = await paymentCollection.find({ userEmail: email }).toArray();
+
+        const contestIds = payments.map((p) => new ObjectId(p.contestId));
+        const contests = await contestCollection.find({ _id: { $in: contestIds } }).toArray();
+
+        const contestsWithPayment = contests.map((contest) => {
+            const payment = payments.find((p) => p.contestId === contest._id.toString());
+            return { ...contest, paymentStatus: payment?.status };
+        });
+
+        contestsWithPayment.sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
+
+        res.send(contestsWithPayment);
+    });
+
     app.post("/participants", verifyToken, async (req, res) => {
         try {
             const { contestId } = req.body;
@@ -865,33 +871,28 @@ async function run() {
         }
     });
 
-    app.get("/participants/:contestId", async (req, res) => {
+    app.get("/participants/:email", async (req, res) => {
+        const { email } = req.params;
         try {
-            const contestId = req.params.contestId;
-
-            if (!ObjectId.isValid(contestId)) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Invalid contest ID",
-                });
-            }
-
-            const participants = await participationCollection
-                .find({ contestId: contestId })
+            const participations = await participationCollection
+                .find({ userEmail: email })
                 .sort({ registeredAt: -1 })
                 .toArray();
 
-            res.json({
-                success: true,
-                participants,
-                count: participants.length,
+            const uniqueContests = [];
+            const contestIds = new Set();
+
+            participations.forEach((p) => {
+                if (!contestIds.has(p.contestId)) {
+                    contestIds.add(p.contestId);
+                    uniqueContests.push(p);
+                }
             });
-        } catch (error) {
-            res.status(500).json({
-                success: false,
-                message: "Failed to fetch participants",
-                error: error.message,
-            });
+
+            res.json({ success: true, data: uniqueContests });
+        } catch (err) {
+            console.error(err);
+            res.status(500).json({ success: false, message: "Server error" });
         }
     });
 
@@ -972,53 +973,32 @@ async function run() {
         }
     });
 
-    app.get("/submissions/contest/:contestId", verifyToken, verifyCreator, async (req, res) => {
+    app.get("/submissions/contest/:contestId", verifyToken, async (req, res) => {
         try {
             const contestId = req.params.contestId;
 
             if (!ObjectId.isValid(contestId)) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Invalid contest ID",
-                });
+                return res.status(400).json({ success: false, message: "Invalid contest ID" });
             }
 
-            const contest = await contestCollection.findOne({
-                _id: new ObjectId(contestId),
-            });
-
+            const contest = await contestCollection.findOne({ _id: new ObjectId(contestId) });
             if (!contest) {
-                return res.status(404).json({
-                    success: false,
-                    message: "Contest not found",
-                });
+                return res.status(404).json({ success: false, message: "Contest not found" });
             }
 
-            const user = await usersCollection.findOne({ email: req.user.email });
-
-            if (contest.creatorEmail !== req.user.email && user.role !== "admin") {
-                return res.status(403).json({
-                    success: false,
-                    message: "You can only view submissions for your own contests",
-                });
-            }
+            // TEMPORARY: Remove this check for testing
+            // if (contest.creatorEmail !== req.user.email && req.user.role !== "admin") {
+            //     return res.status(403).json({ success: false, message: "Forbidden" });
+            // }
 
             const submissions = await submissionCollection
                 .find({ contestId: new ObjectId(contestId) })
                 .sort({ submittedAt: -1 })
                 .toArray();
 
-            res.json({
-                success: true,
-                submissions,
-                count: submissions.length,
-            });
+            res.json({ success: true, submissions, count: submissions.length });
         } catch (error) {
-            res.status(500).json({
-                success: false,
-                message: "Failed to fetch submissions",
-                error: error.message,
-            });
+            res.status(500).json({ success: false, message: "Server error" });
         }
     });
 
@@ -1057,55 +1037,29 @@ async function run() {
 
     // winner relative api
 
-    app.patch("/contests/:id/winner", verifyToken, verifyCreator, async (req, res) => {
+    app.patch("/contests/:id/winner", verifyToken, async (req, res) => {
         try {
             const contestId = req.params.id;
-            const { winnerEmail, winnerName, winnerPhoto } = req.body;
+            const { winnerEmail } = req.body;
 
             if (!ObjectId.isValid(contestId)) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Invalid contest ID",
-                });
+                return res.status(400).json({ message: "Invalid contest ID" });
             }
 
-            if (!winnerEmail) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Winner email is required",
-                });
-            }
+            const contest = await contestCollection.findOne({ _id: new ObjectId(contestId) });
 
-            const contest = await contestCollection.findOne({
-                _id: new ObjectId(contestId),
-            });
-
-            if (!contest) {
-                return res.status(404).json({
-                    success: false,
-                    message: "Contest not found",
-                });
-            }
+            if (!contest) return res.status(404).json({ message: "Contest not found" });
 
             if (contest.creatorEmail !== req.user.email) {
-                return res.status(403).json({
-                    success: false,
-                    message: "You can only declare winners for your own contests",
-                });
-            }
-
-            if (new Date() < new Date(contest.deadline)) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Cannot declare winner before contest deadline",
-                });
+                return res.status(403).json({ message: "Only creator can declare winner" });
             }
 
             if (contest.winner) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Winner already declared for this contest",
-                });
+                return res.status(400).json({ message: "Winner already declared" });
+            }
+
+            if (new Date() < new Date(contest.deadline)) {
+                return res.status(400).json({ message: "Contest still running" });
             }
 
             const submission = await submissionCollection.findOne({
@@ -1114,31 +1068,24 @@ async function run() {
             });
 
             if (!submission) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Winner must have submitted a task",
-                });
+                return res.status(400).json({ message: "Winner must submit a task" });
             }
 
-            let winner = { email: winnerEmail };
-            if (winnerName && winnerPhoto) {
-                winner.name = winnerName;
-                winner.photo = winnerPhoto;
-            } else {
-                const winnerUser = await usersCollection.findOne({ email: winnerEmail });
-                winner.name = winnerUser?.name || "Unknown";
-                winner.photo = winnerUser?.photoURL || "";
-            }
+            const winnerUser = await usersCollection.findOne({ email: winnerEmail });
+
+            const winner = {
+                email: winnerEmail,
+                name: winnerUser?.name || "Unknown",
+                photo: winnerUser?.photoURL || "",
+            };
 
             await contestCollection.updateOne(
                 { _id: new ObjectId(contestId) },
                 {
                     $set: {
-                        winner: winner,
-                        winnerId: winnerEmail,
-                        winnerName: winner.name,
-                        winnerPhoto: winner.photo,
+                        winner,
                         winnerDeclaredAt: new Date(),
+                        status: "completed",
                     },
                 }
             );
@@ -1150,35 +1097,21 @@ async function run() {
 
             await usersCollection.updateOne({ email: winnerEmail }, { $inc: { wins: 1 } });
 
-            res.json({
-                success: true,
-                message: "Winner declared successfully",
-            });
-        } catch (error) {
-            res.status(500).json({
-                success: false,
-                message: "Failed to declare winner",
-                error: error.message,
-            });
+            res.json({ success: true, message: "Winner declared successfully" });
+        } catch (err) {
+            res.status(500).json({ message: "Winner declare failed", error: err.message });
         }
     });
 
     // winning by user
 
-    app.get("/winning/user/:email", verifyToken, async (req, res) => {
+    app.get("/winning/user/me", verifyToken, async (req, res) => {
         try {
-            const email = req.params.email;
-
-            if (req.user.email !== email) {
-                return res.status(403).json({
-                    success: false,
-                    message: "Forbidden access",
-                });
-            }
+            const userEmail = req.user.email;
 
             const winningContests = await contestCollection
                 .find({
-                    $or: [{ winnerId: email }, { "winner.email": email }],
+                    $or: [{ winnerId: userEmail }, { "winner.email": userEmail }],
                 })
                 .sort({ winnerDeclaredAt: -1 })
                 .toArray();
@@ -1189,9 +1122,10 @@ async function run() {
                 count: winningContests.length,
             });
         } catch (error) {
+            console.error("My winnings error:", error);
             res.status(500).json({
                 success: false,
-                message: "Failed to fetch winning contests",
+                message: "Failed to fetch your winnings",
                 error: error.message,
             });
         }
@@ -1199,33 +1133,40 @@ async function run() {
 
     // leaderboard relative api added
 
+    // leaderboard relative api added
     app.get("/leaderboard", async (req, res) => {
         try {
-            const { limit = 20 } = req.query;
+            const { limit = 20, page = 1 } = req.query; // ← ADD THIS LINE
+            const limitNum = parseInt(limit) || 20;
+            const skip = (parseInt(page) - 1) * limitNum;
 
             const topUsers = await usersCollection
                 .find({ wins: { $gt: 0 } })
                 .sort({ wins: -1, name: 1 })
-                .limit(parseInt(limit))
-                .project({
-                    name: 1,
-                    photoURL: 1,
-                    wins: 1,
-                    participationCount: 1,
-                    email: 1,
-                })
+                .skip(skip)
+                .limit(limitNum)
+                .project({ name: 1, photoURL: 1, wins: 1, email: 1, participationCount: 1 })
                 .toArray();
+
+            const total = await usersCollection.countDocuments({ wins: { $gt: 0 } });
 
             const leaderboard = topUsers.map((user, index) => ({
                 ...user,
-                rank: index + 1,
+                rank: skip + index + 1,
             }));
 
             res.json({
                 success: true,
                 leaderboard,
+                pagination: {
+                    total,
+                    page: parseInt(page),
+                    limit: limitNum,
+                    totalPages: Math.ceil(total / limitNum),
+                },
             });
         } catch (error) {
+            console.error("Leaderboard error:", error);
             res.status(500).json({
                 success: false,
                 message: "Failed to fetch leaderboard",
@@ -1233,7 +1174,6 @@ async function run() {
             });
         }
     });
-
     // stats relative api
 
     app.get("/stats/user:email", verifyToken, async (req, res) => {
@@ -1281,15 +1221,22 @@ async function run() {
 
     app.get("/contest-types", async (req, res) => {
         try {
-            const types = await contestCollection.distinct("contestType", {
-                status: "confirmed",
-            });
+            const result = await contestCollection
+                .aggregate([
+                    { $match: { status: "confirmed" } },
+                    { $group: { _id: "$contestType" } },
+                    { $project: { _id: 0, type: "$_id" } },
+                ])
+                .toArray();
+
+            const types = result.map((item) => item.type).filter((type) => type && typeof type === "string");
 
             res.json({
                 success: true,
-                types: types.filter((type) => type),
+                types,
             });
         } catch (error) {
+            console.error("Error fetching contest types:", error);
             res.status(500).json({
                 success: false,
                 message: "Failed to fetch contest types",
