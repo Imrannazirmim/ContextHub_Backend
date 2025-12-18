@@ -254,68 +254,112 @@ async function run() {
     });
 
     app.get("/admin/contest", verifyToken, verifyAdmin, async (req, res) => {
-        const { page = 1, limit = 10, status, search } = req.query;
-        const skip = (page - 1) * limit;
-
-        let query = {};
-
-        if (status && status !== "all") {
-            query.status = status;
-        }
-
-        if (search) {
-            query.$or = [
-                { name: { $regex: search, $options: "i" } },
-                { description: { $regex: search, $options: "i" } },
-            ];
-        }
-
-        const contests = await contestCollection.find(query).sort({ createdAt: -1 }).skip(skip).limit(+limit).toArray();
-
-        const total = await contestCollection.countDocuments(query);
-
-        res.json({
-            contests,
-            pagination: {
-                total,
-                page: +page,
-                limit: +limit,
-                totalPages: Math.ceil(total / limit),
-            },
-        });
-    });
-    app.patch("/admin/contest/:id/approve", verifyToken, async (req, res) => {
         try {
-            const id = req.params.id;
+            const { page = 1, limit = 10, search = "", status } = req.query;
 
-            if (!ObjectId.isValid(id)) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Invalid contest ID",
-                });
+            const query = {};
+
+            if (search) {
+                query.$or = [
+                    { name: { $regex: search, $options: "i" } },
+                    { description: { $regex: search, $options: "i" } },
+                ];
             }
 
-            const result = await contestCollection.updateOne(
-                { _id: new ObjectId(id) },
-                {
-                    $set: {
-                        status: "confirmed",
-                        approvedAt: new Date(),
-                    },
+            if (status && status !== "all") {
+                query.status = status;
+            }
+
+            const skip = (page - 1) * limit;
+
+            const contests = await contestCollection
+                .find(query)
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(Number(limit))
+                .toArray();
+
+            const total = await contestCollection.countDocuments(query);
+
+            res.json({
+                contests,
+                pagination: {
+                    total,
+                    page: Number(page),
+                    totalPages: Math.ceil(total / limit),
+                },
+            });
+        } catch (error) {
+            res.status(500).json({
+                message: "Failed to load contests",
+                error: error.message,
+            });
+        }
+    });
+
+    app.patch("/admin/contest/:id/approve", verifyToken, verifyAdmin, async (req, res) => {
+        try {
+            const contestId = req.params.id;
+            const { winnerEmail } = req.body;
+
+            if (!ObjectId.isValid(contestId)) {
+                return res.status(400).json({ success: false, message: "Invalid contest ID" });
+            }
+
+            const contest = await contestCollection.findOne({
+                _id: new ObjectId(contestId),
+            });
+
+            if (!contest) {
+                return res.status(404).json({ success: false, message: "Contest not found" });
+            }
+
+            const updateData = {
+                status: "confirmed",
+                approvedAt: new Date(),
+            };
+
+            let winner = null;
+
+            if (winnerEmail) {
+                const submission = await submissionCollection.findOne({
+                    contestId: new ObjectId(contestId),
+                    userEmail: winnerEmail,
+                });
+
+                if (!submission) {
+                    return res.status(400).json({
+                        success: false,
+                        message: "Winner must have a submission",
+                    });
                 }
-            );
 
-            if (result.matchedCount === 0) {
-                return res.status(404).json({
-                    success: false,
-                    message: "Contest not found",
-                });
+                const winnerUser = await usersCollection.findOne({ email: winnerEmail });
+
+                winner = {
+                    email: winnerEmail,
+                    name: winnerUser?.name || "Unknown",
+                    photo: winnerUser?.photoURL || "",
+                };
+
+                updateData.winner = winner;
+                updateData.winnerDeclaredAt = new Date();
+                updateData.status = "completed";
+
+                await submissionCollection.updateOne(
+                    { contestId: new ObjectId(contestId), userEmail: winnerEmail },
+                    { $set: { isWinner: true } }
+                );
+
+                await usersCollection.updateOne({ email: winnerEmail }, { $inc: { wins: 1 } });
             }
+
+            await contestCollection.updateOne({ _id: new ObjectId(contestId) }, { $set: updateData });
 
             res.json({
                 success: true,
-                message: "Contest approved successfully",
-                modifiedCount: result.modifiedCount,
+                message: winner ? "Contest approved and winner declared" : "Contest approved successfully",
+                winner,
             });
         } catch (error) {
             res.status(500).json({
@@ -985,12 +1029,6 @@ async function run() {
             if (!contest) {
                 return res.status(404).json({ success: false, message: "Contest not found" });
             }
-
-            // TEMPORARY: Remove this check for testing
-            // if (contest.creatorEmail !== req.user.email && req.user.role !== "admin") {
-            //     return res.status(403).json({ success: false, message: "Forbidden" });
-            // }
-
             const submissions = await submissionCollection
                 .find({ contestId: new ObjectId(contestId) })
                 .sort({ submittedAt: -1 })
