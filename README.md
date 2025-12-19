@@ -4,9 +4,7 @@ This is the backend server for **ContestHub**, a full-featured contest platform 
 
 The backend is built with **Node.js**, **Express.js**, **MongoDB**, and integrates **Stripe** for payments and **Firebase Admin SDK** for token verification.
 
-### Base URL
-🔗 **https://contesthub-server-chi.vercel.app/**  
-(Replace with your actual Vercel URL after deployment)
+
 
 ### Tech Stack
 - **Node.js** + **Express.js** – RESTful API server
