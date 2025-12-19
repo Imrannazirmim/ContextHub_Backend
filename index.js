@@ -1175,25 +1175,50 @@ async function run() {
         }
     });
 
-    // leaderboard relative api added
+    // leaderboard relative api
     app.get("/leaderboard", async (req, res) => {
         try {
-            const { limit = 20, page = 1 } = req.query; // ← ADD THIS LINE
-            const limitNum = parseInt(limit) || 20;
-            const skip = (parseInt(page) - 1) * limitNum;
+            const { limit = 10, page = 1, search = "" } = req.query;
+            const limitNum = parseInt(limit);
+            const pageNum = parseInt(page);
+            const skip = (pageNum - 1) * limitNum;
+
+            const searchQuery = {
+                $or: [{ wins: { $gt: 0 } }, { wins: { $exists: true, $ne: null } }],
+            };
+
+            if (search && search.trim()) {
+                searchQuery.$and = [
+                    { $or: searchQuery.$or },
+                    {
+                        $or: [
+                            { name: { $regex: search.trim(), $options: "i" } },
+                            { email: { $regex: search.trim(), $options: "i" } },
+                        ],
+                    },
+                ];
+                delete searchQuery.$or;
+            }
+
+            const total = await usersCollection.countDocuments(searchQuery);
 
             const topUsers = await usersCollection
-                .find({ wins: { $gt: 0 } })
+                .find(searchQuery)
                 .sort({ wins: -1, name: 1 })
                 .skip(skip)
                 .limit(limitNum)
-                .project({ name: 1, photoURL: 1, wins: 1, email: 1, participationCount: 1 })
+                .project({
+                    name: 1,
+                    photoURL: 1,
+                    wins: 1,
+                    email: 1,
+                    participationCount: 1,
+                })
                 .toArray();
-
-            const total = await usersCollection.countDocuments({ wins: { $gt: 0 } });
 
             const leaderboard = topUsers.map((user, index) => ({
                 ...user,
+                wins: user.wins || 0,
                 rank: skip + index + 1,
             }));
 
@@ -1202,7 +1227,7 @@ async function run() {
                 leaderboard,
                 pagination: {
                     total,
-                    page: parseInt(page),
+                    page: pageNum,
                     limit: limitNum,
                     totalPages: Math.ceil(total / limitNum),
                 },
@@ -1218,19 +1243,11 @@ async function run() {
     });
     // stats relative api
 
-    app.get("/stats/user:email", verifyToken, async (req, res) => {
+    app.get("/stats/user", verifyToken, async (req, res) => {
         try {
-            const email = req.params.email;
-
-            if (req.user.email !== email) {
-                return res.status(403).json({
-                    success: false,
-                    message: "Forbidden access",
-                });
-            }
+            const email = req.user.email; // Get from verified token instead of params
 
             const user = await usersCollection.findOne({ email });
-
             if (!user) {
                 return res.status(404).json({
                     success: false,
@@ -1243,12 +1260,9 @@ async function run() {
             const winPercentage = participated > 0 ? ((won / participated) * 100).toFixed(2) : 0;
 
             res.json({
-                success: true,
-                stats: {
-                    participated,
-                    won,
-                    winPercentage: parseFloat(winPercentage),
-                },
+                participated,
+                won,
+                winPercentage: parseFloat(winPercentage),
             });
         } catch (error) {
             res.status(500).json({
