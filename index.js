@@ -473,8 +473,8 @@ async function run() {
                     totalParticipants: await paymentCollection.countDocuments(),
                 },
                 recentContests,
-                newUsers: [], // Add real data later
-                categories: [], // Add real data later
+                newUsers: [],
+                categories: [],
             });
         } catch (error) {
             res.status(500).json({ message: "Server error", error: error.message });
@@ -1149,15 +1149,21 @@ async function run() {
 
             const winningContests = await contestCollection
                 .find({
-                    $or: [{ winnerId: userEmail }, { "winner.email": userEmail }],
+                    $or: [{ "winner.email": userEmail }, { winner: userEmail }],
+                    status: "completed",
                 })
                 .sort({ winnerDeclaredAt: -1 })
                 .toArray();
 
+            const cleanedContests = winningContests.map((contest) => ({
+                ...contest,
+                prizeMoney: contest.prizeMoney || contest.prize || contest.entryFee || 0,
+            }));
+
             res.json({
                 success: true,
-                winningContests,
-                count: winningContests.length,
+                winningContests: cleanedContests,
+                count: cleanedContests.length,
             });
         } catch (error) {
             console.error("My winnings error:", error);
@@ -1168,8 +1174,6 @@ async function run() {
             });
         }
     });
-
-    // leaderboard relative api added
 
     // leaderboard relative api added
     app.get("/leaderboard", async (req, res) => {
